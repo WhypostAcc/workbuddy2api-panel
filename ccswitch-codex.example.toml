@@ -1,0 +1,10 @@
+# CC Switch > Codex > Add provider > Custom configuration.
+# The API key is read from the WB2API_API_KEY user environment variable.
+model = "glm-5.2"
+model_provider = "workbuddy_local"
+
+[model_providers.workbuddy_local]
+name = "WorkBuddy Local"
+base_url = "http://127.0.0.1:7864/v1"
+wire_api = "responses"
+env_key = "WB2API_API_KEY"

@@ -273,6 +273,22 @@ docker compose restart          # 重启
 docker compose down             # 停止并移除容器（数据在 ./auths 与 ./data，不受影响）
 ```
 
+### 本地 Claude Code / Codex 协议桥
+
+本仓库的 Compose 配置同时启动 `codex-bridge`，监听 `127.0.0.1:7864`。它把 Claude Code 的
+Anthropic Messages 请求（`/v1/messages`）和 Codex 的 Responses 请求（`/v1/responses`）转换为
+网关的 OpenAI Chat Completions 请求，再转发到 `127.0.0.1:7863`。桥接层包含工具调用历史的
+顺序修复与重复结果清理，避免 DeepSeek 上游返回 `11148 tool calls and tool results do not match`。
+
+因此 Claude Code / Codex 的 Base URL 使用：
+
+```text
+http://127.0.0.1:7864/v1
+```
+
+Codex 的 CC Switch 自定义提供商示例见仓库根目录的 `ccswitch-codex.example.toml`。API 密钥通过
+`WB2API_API_KEY` 环境变量提供；不要把 `config.json`、`auths/` 或 `data/` 提交到版本库。
+
 ### 方式二：Windows 单文件运行（无需 Docker）
 
 ```powershell

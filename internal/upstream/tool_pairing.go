@@ -70,6 +70,12 @@ func repackToolResultBlocks(messages []any) ([]any, bool) {
 				break
 			}
 			role, _ := mm["role"].(string)
+			// 下一组 assistant.tool_calls 是新的组头，必须交还外层循环处理。
+			if role == "assistant" {
+				if next, _ := mm["tool_calls"].([]any); len(next) > 0 {
+					break
+				}
+			}
 			if role == "tool" {
 				id, _ := mm["tool_call_id"].(string)
 				if !want[id] {
@@ -83,15 +89,13 @@ func repackToolResultBlocks(messages []any) ([]any, bool) {
 				continue
 			}
 			if len(results) == 0 {
-				break // assistant 后没有结果：交由 cleanupOrphanToolCalls 处理
-			}
-			// 下一组 assistant.tool_calls 是新的组头，绝不能当插入物吞掉：一旦被收进
-			// between，它永远不再被外层循环当作组头处理，它自己那批结果也就永远得不
-			// 到重排（真实会话 msg[181] 正是这样漏掉的）。必须 break 交还外层循环。
-			if role == "assistant" {
-				if next, _ := mm["tool_calls"].([]any); len(next) > 0 {
-					break
-				}
+				// 某些 Anthropic 客户端会把同一个 user content 中的文字块转换到
+				// tool 结果之前。继续扫描并把它暂存，等同批结果收齐后再后移；
+				// 否则工具结果永远看起来像孤儿，DeepSeek 会返回 11148。
+				between = append(between, messages[i])
+				sawNonTool = true
+				i++
+				continue
 			}
 			// 同批结果尚未收齐时，中间消息视为插入物，暂存待后移。
 			between = append(between, messages[i])
@@ -204,6 +208,7 @@ func cleanupOrphanToolCalls(messages []any) ([]any, bool) {
 	}
 	// 2) role:tool 结果：只有对应 tool_call 被保留才保留；孤儿结果整条删除。
 	kept := make([]any, 0, len(messages))
+	seenResultIDs := map[string]bool{}
 	for _, m := range messages {
 		msg, ok := m.(map[string]any)
 		if !ok {
@@ -212,10 +217,11 @@ func cleanupOrphanToolCalls(messages []any) ([]any, bool) {
 		}
 		if role, _ := msg["role"].(string); role == "tool" {
 			id, _ := msg["tool_call_id"].(string)
-			if !keepCalls[id] {
+			if !keepCalls[id] || seenResultIDs[id] {
 				changed = true
 				continue
 			}
+			seenResultIDs[id] = true
 		}
 		kept = append(kept, m)
 	}

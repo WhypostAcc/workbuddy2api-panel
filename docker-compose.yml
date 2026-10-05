@@ -14,7 +14,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
     ports:
-      - "7863:7863"
+      - "127.0.0.1:7863:7863"
     volumes:
       - ./auths:/app/auths
       - ./data:/app/data
@@ -23,3 +23,14 @@ services:
       # 但前提是它能以文件形式写入 —— 挂载目录会挡住这条路径）。
       # 不挂 :ro：面板「配置」页需要写回此文件（保存后热生效）。
       - ./config.json:/app/config.json
+
+  codex-bridge:
+    build: ./codex-bridge
+    container_name: workbuddy2api-codex-bridge
+    restart: unless-stopped
+    depends_on:
+      - wb2api
+    environment:
+      - WB2API_BASE_URL=http://wb2api:7863
+    ports:
+      - "127.0.0.1:7864:7864"

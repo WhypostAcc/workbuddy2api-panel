@@ -35,7 +35,7 @@ const (
 	ErrNotFound                      // 404 上游偶发 → 短冷却，不累计错误计数（防雪崩）
 	ErrServer                        // 5xx 上游故障
 	ErrContentBlocked                // 内容策略拦截（400 + 审核文案）→ 不罚账号，走降级重试
-	ErrBadParams                     // 请求体解析失败（400 + Unmarshal chat params failed / 11101）→ 请求级错误：不罚号、不轮转，末端 400 透传原文
+	ErrBadParams                     // 请求体/工具历史解析失败（11101/11148）→ 请求级错误：不罚号、不轮转，末端 400 透传原文
 	ErrAccountFault                  // 账号级授权/配额故障（11140 request illegal / 14017 trial not activated）→ 冷却轮换，不无限重试
 	ErrModelBlocked                  // 11102「该后端无此模型」→ (账号,模型) 负缓存避让，切模型/切账号
 	ErrWafBlock                      // 403 + 非业务信封体（APISIX WAF 拦截页/空体）→ 账号软冷却 + 抖动退避
@@ -157,6 +157,10 @@ var contentBlockedMarkers = []string{
 // "Unmarshal chat params failed..."（code 11101）。这是"发给上游的 body 有问题"，
 // 与账号健康无关——不罚号，但仍轮转（commit B）。
 var badParamsMarkerMsg = "Unmarshal chat params failed"
+
+// toolPairingMarkerMsg 工具调用历史配对错误（11148）。这是客户端会话历史的
+// 请求级问题，不是账号故障；换账号重试只会把同一份坏历史扩散到整个账号池。
+var toolPairingMarkerMsg = "tool calls and tool results do not match"
 
 // invalidImageMarkers 图片请求格式/数据无效（HTTP 400）的**文案**形态。这类错误由
 // 请求内容决定，不是账号问题：换账号不会改变同一 body 的解析结果。上游常见形态包括
@@ -580,6 +584,13 @@ func Classify(status int, body string) ErrKind {
 			if strings.Contains(lower, m) {
 				return ErrContentBlocked
 			}
+		}
+		// 11148 tool_call_sequence_broken：工具调用/结果历史不匹配。
+		// 这是客户端请求级错误，必须和 11101 一样立即透传，不能轮转账号并
+		// 触发连败降权；工具配对管线会先修复常见形态，剩余形态交给客户端
+		// 新建会话或修正历史。
+		if strings.Contains(lower, toolPairingMarkerMsg) || strings.Contains(lower, "tool_call_sequence_broken") || codeMarker(lower, "11148") {
+			return ErrBadParams
 		}
 		// 请求体解析失败（HTTP 400 + Unmarshal chat params failed / code 11101）：
 		// 这是"发给上游的 body 有问题"。网关侧截断已由 413 消灭（issue #41 commit A），

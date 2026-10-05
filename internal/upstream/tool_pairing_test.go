@@ -228,6 +228,23 @@ func TestRepackToolResultBlocks(t *testing.T) {
 		assertSummary(t, summarize(out), []string{"assistant(c00,c01)", "tool(c00)", "tool(c01)", "system(-)"})
 	})
 
+	t.Run("首个结果前的消息也后移", func(t *testing.T) {
+		// Anthropic 一个 user content 同时含 text + tool_result 时，协议桥接层
+		// 可能先产出 user(text)，再产出 tool(result)。这条消息仍属于同批工具
+		// 历史，不能让它阻断后续结果。
+		in := msgs(t, `[
+			{"role":"assistant","content":null,"tool_calls":[{"id":"c00"},{"id":"c01"}]},
+			{"role":"user","content":"工具结果如下"},
+			{"role":"tool","tool_call_id":"c00","content":"r0"},
+			{"role":"tool","tool_call_id":"c01","content":"r1"}
+		]`)
+		out, changed := repackToolResultBlocks(in)
+		if !changed {
+			t.Fatal("changed=false，首个结果前的消息应后移")
+		}
+		assertSummary(t, summarize(out), []string{"assistant(c00,c01)", "tool(c00)", "tool(c01)", "user(-)"})
+	})
+
 	t.Run("下一组组头不被吞掉", func(t *testing.T) {
 		// 真实会话漏排的形态：第一组结果后跟着插入消息、再接第二组组头。组头必须交还外层
 		// 循环当组头处理——否则它会被当成插入物挪走，它自己那批结果（t(c10) 与 t(c11)
@@ -314,6 +331,22 @@ func TestCleanupOrphanToolCalls(t *testing.T) {
 			t.Error("changed=true，完整配对不应改动")
 		}
 		assertSummary(t, summarize(out), []string{"assistant(c1,c2)", "tool(c1)", "tool(c2)"})
+	})
+
+	t.Run("重复结果只保留首个", func(t *testing.T) {
+		in := msgs(t, `[
+			{"role":"assistant","content":null,"tool_calls":[{"id":"c1"}]},
+			{"role":"tool","tool_call_id":"c1","content":"first"},
+			{"role":"tool","tool_call_id":"c1","content":"duplicate"}
+		]`)
+		out, changed := cleanupOrphanToolCalls(in)
+		if !changed {
+			t.Fatal("changed=false，重复结果应清理")
+		}
+		assertSummary(t, summarize(out), []string{"assistant(c1)", "tool(c1)"})
+		if got := out[1].(map[string]any)["content"]; got != "first" {
+			t.Fatalf("保留了错误的结果: %v", got)
+		}
 	})
 
 	t.Run("无工具流量零改动", func(t *testing.T) {
